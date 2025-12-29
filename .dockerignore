@@ -1,0 +1,10 @@
+__pycache__
+.pytest_cache
+*.pyc
+*.pyo
+*.pyd
+.env
+.git
+.gitignore
+frontend/node_modules
+frontend/dist

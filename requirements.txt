@@ -1,0 +1,11 @@
+pyyaml
+schema
+pymongo
+asyncio
+python-telegram-bot
+pytest
+datetime
+pulp
+numpy
+fastapi
+uvicorn
