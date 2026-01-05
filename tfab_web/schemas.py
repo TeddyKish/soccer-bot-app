@@ -18,10 +18,14 @@ class LoginResponse(BaseModel):
 class PlayerCreate(BaseModel):
     name: str = Field(..., min_length=1)
     position: Literal["GK", "DEF", "ATT", "ALL"]
+    entryCount: int = 0
+    cashContribution: Optional[float] = None
 
 
 class PlayerUpdate(BaseModel):
     position: Literal["GK", "DEF", "ATT", "ALL"]
+    entryCount: Optional[int] = None
+    cashContribution: Optional[float] = None
 
 
 class GuestCreate(BaseModel):
@@ -46,6 +50,19 @@ class MatchdayImport(BaseModel):
 class MatchdayReplace(BaseModel):
     currentName: str = Field(..., min_length=1)
     replacementName: str = Field(..., min_length=1)
+    isGuest: Optional[bool] = False
+    position: Optional[Literal["GK", "DEF", "ATT", "ALL"]] = None
+    rating: Optional[float] = Field(None, ge=0, le=10)
+    invitedBy: Optional[str] = None
+
+
+class MatchdayTeamColors(BaseModel):
+    colors: List[Literal["white", "yellow", "red"]]
+
+
+class MatchdayFinish(BaseModel):
+    teamWins: Optional[List[int]] = None
+    waterCarrierName: Optional[str] = None
 
 
 class ConstraintRequest(BaseModel):
@@ -64,3 +81,36 @@ class SettingsUpdate(BaseModel):
 
 class RankingsUpdate(BaseModel):
     rankings: Dict[str, float]
+
+
+class PlayerImportRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+
+
+class CashUpdate(BaseModel):
+    amount: Optional[float] = None
+    delta: Optional[float] = None
+    reason: Optional[str] = None
+
+
+class CashIncome(BaseModel):
+    playerName: str = Field(..., min_length=1)
+    entries: int = Field(..., ge=1)
+    amount: float = Field(..., gt=0)
+
+
+class GuestPaymentUpdate(BaseModel):
+    name: str = Field(..., min_length=1)
+    date: str = Field(..., min_length=1)
+
+
+class GuestPaymentResolve(BaseModel):
+    name: str = Field(..., min_length=1)
+    date: str = Field(..., min_length=1)
+    method: Literal["income", "entry"]
+    amount: Optional[float] = None
+    payerName: Optional[str] = None
+
+
+class RankerTokenCreate(BaseModel):
+    name: str = Field(..., min_length=1)

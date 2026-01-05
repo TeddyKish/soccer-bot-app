@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 import numpy as np
 from tfab_framework import tfab_exception
 from tfab_framework.tfab_consts import Consts as TConsts
@@ -43,7 +44,8 @@ class TFABDBHandler(object):
         for cname in [TConsts.PLAYERS_COLLECTION_NAME, TConsts.ADMINS_COLLECTION_NAME,
                       TConsts.RANKERS_COLLECTION_NAME, TConsts.MATCHDAYS_COLLECTION_NAME,
                       TConsts.INTERNAL_COLLECTION_NAME, TConsts.SESSIONS_COLLECTION_NAME,
-                      TConsts.AUTH_ATTEMPTS_COLLECTION_NAME]:
+                      TConsts.AUTH_ATTEMPTS_COLLECTION_NAME, TConsts.CASH_LEDGER_COLLECTION_NAME,
+                      TConsts.GUEST_PAYMENTS_COLLECTION_NAME]:
             if cname not in collection_names:
                 self.db.create_collection(cname)
 
@@ -125,15 +127,18 @@ class TFABDBHandler(object):
 
         return result is not None
 
-    def insert_player(self, player_name, characteristics):
+    def insert_player(self, player_name, characteristics, entry_count=0):
         """
         Inserts a single player and their characteristics.
         """
         if self.check_player_existence(player_name):
             return
 
-        new_player = \
-            {TConsts.PLAYERS_NAME_KEY: player_name, TConsts.PLAYERS_CHARACTERISTICS_KEY: characteristics}
+        new_player = {
+            TConsts.PLAYERS_NAME_KEY: player_name,
+            TConsts.PLAYERS_CHARACTERISTICS_KEY: characteristics,
+            TConsts.PLAYERS_ENTRY_COUNT_KEY: entry_count,
+        }
         players_collection = self.__get_collection(TConsts.PLAYERS_COLLECTION_NAME)
 
         try:
@@ -154,19 +159,84 @@ class TFABDBHandler(object):
         except Exception as e:
             raise tfab_exception.TFABDatabaseError("TFAB Database Error occurred: " + str(e))
 
-    def insert_ranker(self, ranker_name, ranker_id):
+    def insert_ranker(self, ranker_name, ranker_id, ranker_token=None):
         """
         Inserts <ranker_name, ranker_id> to the Rankers collection.
         """
-        new_ranker = \
-            {TConsts.USER_ID_KEY: ranker_id, TConsts.USER_FULLNAME_KEY: ranker_name,
-             TConsts.RANKERS_USER_RANKINGS: {}}
+        new_ranker = {
+            TConsts.USER_ID_KEY: ranker_id,
+            TConsts.USER_FULLNAME_KEY: ranker_name,
+            TConsts.RANKERS_USER_RANKINGS: {},
+        }
+        if ranker_token:
+            new_ranker[TConsts.RANKERS_TOKEN_KEY] = ranker_token
         rankers_collection = self.__get_collection(TConsts.RANKERS_COLLECTION_NAME)
 
         try:
             rankers_collection.insert_one(new_ranker)
         except Exception as e:
             raise tfab_exception.TFABDatabaseError("TFAB Database Error occurred: " + str(e))
+
+    def upsert_ranker_token(self, ranker_name, ranker_token):
+        """
+        Inserts a ranker if missing and updates the token for future logins.
+        """
+        rankers_collection = self.__get_collection(TConsts.RANKERS_COLLECTION_NAME)
+        filter_object = {TConsts.USER_ID_KEY: ranker_name}
+        update_object = {
+            "$set": {
+                TConsts.USER_FULLNAME_KEY: ranker_name,
+                TConsts.RANKERS_TOKEN_KEY: ranker_token,
+            },
+            "$setOnInsert": {
+                TConsts.USER_ID_KEY: ranker_name,
+                TConsts.RANKERS_USER_RANKINGS: {},
+            },
+        }
+
+        try:
+            result = rankers_collection.update_one(filter_object, update_object, upsert=True)
+        except Exception as e:
+            raise tfab_exception.TFABDatabaseError("TFAB Database Error occurred: " + str(e))
+
+        return result.matched_count == 1 or result.upserted_id is not None
+
+    def get_ranker_by_token(self, ranker_token):
+        """
+        :return: The ranker record for a given login token.
+        """
+        rankers_collection = self.__get_collection(TConsts.RANKERS_COLLECTION_NAME)
+        filter_object = {TConsts.RANKERS_TOKEN_KEY: ranker_token}
+
+        try:
+            result = rankers_collection.find_one(filter_object)
+        except Exception as e:
+            raise tfab_exception.TFABDatabaseError("TFAB Database Error occurred: " + str(e))
+
+        return result
+
+    def list_rankers(self):
+        """
+        :return: A list of rankers with their metadata and rankings.
+        """
+        rankers_collection = self.__get_collection(TConsts.RANKERS_COLLECTION_NAME)
+
+        try:
+            all_rankers_cursor = rankers_collection.find()
+        except Exception as e:
+            raise tfab_exception.TFABDatabaseError("TFAB Database Error occurred: " + str(e))
+
+        rankers = []
+        for ranker in all_rankers_cursor:
+            rankers.append(
+                {
+                    "id": ranker.get(TConsts.USER_ID_KEY),
+                    "name": ranker.get(TConsts.USER_FULLNAME_KEY),
+                    "token": ranker.get(TConsts.RANKERS_TOKEN_KEY),
+                    "rankings": ranker.get(TConsts.RANKERS_USER_RANKINGS, {}),
+                }
+            )
+        return rankers
 
     def insert_matchday(self, original_message, location, player_list, date,
                         coupling_constraints=None, decoupling_constraints=None, guests=None, time_value=None):
@@ -201,6 +271,7 @@ class TFABDBHandler(object):
             TConsts.MATCHDAYS_COUPLING_CONSTRAINTS_KEY: coupling_constraints,
             TConsts.MATCHDAYS_DECOUPLING_CONSTRAINTS_KEY: decoupling_constraints,
             TConsts.MATCHDAYS_GUESTS_KEY: guests,
+            TConsts.MATCHDAYS_FINALIZED_KEY: False,
         }
 
         matchdays_collection = self.__get_collection(TConsts.MATCHDAYS_COLLECTION_NAME)
@@ -245,7 +316,8 @@ class TFABDBHandler(object):
                                 else player[TConsts.PLAYERS_CHARACTERISTICS_KEY],
                                 self.get_player_average_rating(player[TConsts.PLAYERS_NAME_KEY],
                                                                self.get_configuration_value
-                                                               (TConsts.INTERNAL_RATING_DEVIATION_THRESHOLD_KEY))))
+                                                               (TConsts.INTERNAL_RATING_DEVIATION_THRESHOLD_KEY)),
+                                player.get(TConsts.PLAYERS_ENTRY_COUNT_KEY, 0)))
         return player_list
 
     def get_user_rankings(self, user_id):
@@ -289,16 +361,20 @@ class TFABDBHandler(object):
 
         return result.matched_count == 1, result.modified_count == 1
 
-    def edit_player(self, player_name, new_characteristic):
+    def edit_player(self, player_name, new_characteristic, entry_count=None):
         """
         Edits the player's characteristic.
         :param player_name: The player that we wish to edit.
         :param new_characteristic: The new characteristic of the player.
+        :param entry_count: The updated entries count, if provided.
         :return: (A, B) -> A is True if the entry was found, B is true if modifications occurred.
         """
         players_collection = self.__get_collection(TConsts.PLAYERS_COLLECTION_NAME)
         filter_object = {TConsts.PLAYERS_NAME_KEY: player_name}
-        update_operation = {'$set': {TConsts.PLAYERS_CHARACTERISTICS_KEY: new_characteristic}}
+        update_values = {TConsts.PLAYERS_CHARACTERISTICS_KEY: new_characteristic}
+        if entry_count is not None:
+            update_values[TConsts.PLAYERS_ENTRY_COUNT_KEY] = entry_count
+        update_operation = {'$set': update_values}
 
         try:
             results = players_collection.update_one(filter_object, update_operation)
@@ -307,6 +383,66 @@ class TFABDBHandler(object):
 
         # Not checking modified_count, to allow an admin to click on the same characteristic without triggering errors
         return results.matched_count == 1, results.modified_count == 1
+
+    def adjust_entries_for_players(self, player_names, delta):
+        """
+        Adjusts entries for all players in <player_names> by <delta>.
+        """
+        if not player_names:
+            return 0
+        players_collection = self.__get_collection(TConsts.PLAYERS_COLLECTION_NAME)
+        filter_object = {TConsts.PLAYERS_NAME_KEY: {"$in": list(player_names)}}
+        update_operation = {"$inc": {TConsts.PLAYERS_ENTRY_COUNT_KEY: int(delta)}}
+
+        try:
+            result = players_collection.update_many(filter_object, update_operation)
+        except Exception as e:
+            raise tfab_exception.TFABDatabaseError("TFAB Database Error occurred: " + str(e))
+
+        return result.modified_count
+
+    def get_cash_balance(self):
+        """
+        :return: The current cash balance as a float.
+        """
+        value = self.get_configuration_value(TConsts.INTERNAL_CASH_BALANCE_KEY)
+        if value is None:
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def update_cash_balance(self, delta, reason, meta=None):
+        """
+        Updates the cash balance and logs the change.
+        """
+        ledger_collection = self.__get_collection(TConsts.CASH_LEDGER_COLLECTION_NAME)
+        current_balance = self.get_cash_balance()
+        next_balance = current_balance + float(delta)
+        self.upsert_configuration_value(TConsts.INTERNAL_CASH_BALANCE_KEY, next_balance)
+
+        entry = {
+            "delta": float(delta),
+            "balance": next_balance,
+            "reason": reason,
+            "meta": meta or {},
+            "createdAt": datetime.utcnow(),
+        }
+        try:
+            ledger_collection.insert_one(entry)
+        except Exception as e:
+            raise tfab_exception.TFABDatabaseError("TFAB Database Error occurred: " + str(e))
+
+        return next_balance
+
+    def set_cash_balance(self, amount, reason, meta=None):
+        """
+        Sets the cash balance to <amount> and logs the change.
+        """
+        current_balance = self.get_cash_balance()
+        delta = float(amount) - float(current_balance)
+        return self.update_cash_balance(delta, reason, meta)
 
     def check_player_existence(self, player_name):
         """
@@ -463,7 +599,7 @@ class TFABDBHandler(object):
 
         return results.matched_count == 1
 
-    def replace_matchday_player(self, date, current_name, replacement_name):
+    def replace_matchday_player(self, date, current_name, replacement_name, replacement_guest=None):
         """
         Replaces a player name in the matchday roster with another existing player.
         Also removes a guest entry if the current player is a guest and clears teams.
@@ -481,8 +617,12 @@ class TFABDBHandler(object):
         ]
         guests = matchday.get(TConsts.MATCHDAYS_GUESTS_KEY, []) or []
         updated_guests = [
-            guest for guest in guests if guest.get(TConsts.PLAYERS_NAME_KEY) != current_name
+            guest
+            for guest in guests
+            if guest.get(TConsts.PLAYERS_NAME_KEY) not in {current_name, replacement_name}
         ]
+        if replacement_guest:
+            updated_guests.append(replacement_guest)
 
         def adjust_constraints(constraints):
             updated = []
@@ -535,6 +675,21 @@ class TFABDBHandler(object):
             raise tfab_exception.TFABDatabaseError("TFAB Database Error occurred: " + str(e))
 
         return None if result is None else result[TConsts.PLAYERS_CHARACTERISTICS_KEY]
+
+    def get_player_entry_count(self, player_name):
+        """
+        :return: The entry count for <player_name>.
+        """
+        players_collection = self.__get_collection(TConsts.PLAYERS_COLLECTION_NAME)
+        filter_object = {TConsts.PLAYERS_NAME_KEY: player_name}
+        try:
+            result = players_collection.find_one(filter_object)
+        except Exception as e:
+            raise tfab_exception.TFABDatabaseError("TFAB Database Error occurred: " + str(e))
+
+        if result is None:
+            return None
+        return result.get(TConsts.PLAYERS_ENTRY_COUNT_KEY, 0)
 
     def check_admin_existence(self, admin_id):
         """

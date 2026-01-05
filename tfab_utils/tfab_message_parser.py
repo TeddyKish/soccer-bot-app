@@ -100,6 +100,9 @@ class MessageParser:
         :param message: The message to search in.
         :return: The time value (if it exists), or None otherwise.
         """
+        range_pattern = re.compile(
+            r"((?:[01]?\d|2[0-3])[:.][0-5]\d)\s*[-–—]\s*((?:[01]?\d|2[0-3])[:.][0-5]\d)"
+        )
         pattern = re.compile(r"(?:שעה[:\s]*)?((?:[01]?\d|2[0-3])[:.][0-5]\d)")
         date_pattern = re.compile(
             r"((0?[1-9])|1\d|2\d|30|31)[./\\-]((0?[1-9])|1[012])[./\\-]((20)?([2-9]\d))"
@@ -108,6 +111,16 @@ class MessageParser:
             line_text = line.strip()
             if "תאריך" in line_text or date_pattern.search(line_text):
                 continue
+            range_match = range_pattern.search(line_text)
+            if range_match:
+                start_value = range_match.group(1).replace(".", ":")
+                end_value = range_match.group(2).replace(".", ":")
+                start_parts = start_value.split(":")
+                end_parts = end_value.split(":")
+                if len(start_parts) == 2 and len(end_parts) == 2:
+                    start_value = f"{start_parts[0].zfill(2)}:{start_parts[1].zfill(2)}"
+                    end_value = f"{end_parts[0].zfill(2)}:{end_parts[1].zfill(2)}"
+                return f"{start_value}-{end_value}"
             match = pattern.search(line_text)
             if match:
                 time_value = match.group(1).replace(".", ":")

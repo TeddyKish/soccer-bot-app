@@ -49,7 +49,7 @@ class RankersMenuHandlers(object):
     @staticmethod
     def __get_rankings_template(update, context):
         players = [name
-                   for name, role, _ in TFABDBHandler.get_instance().get_player_list(hebrew_characteristics=False)
+                   for name, role, *_ in TFABDBHandler.get_instance().get_player_list(hebrew_characteristics=False)
                    if role != TConsts.PlayerCharacteristics["GOALKEEPER"]]
         user_rankings = TFABDBHandler.get_instance().get_user_rankings(update.effective_user.id)
         if user_rankings is None:
