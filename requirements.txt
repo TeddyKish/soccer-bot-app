@@ -1,6 +1,7 @@
 pyyaml
 schema
-pymongo
+pymongo>=4.6
+dnspython>=2.4
 asyncio
 python-telegram-bot
 pytest
